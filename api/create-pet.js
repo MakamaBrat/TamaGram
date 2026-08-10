@@ -28,20 +28,26 @@ export default async function handler(req, res) {
   const { name } = req.body;
   const petName = (name || 'Pet').toString().slice(0, 32); // ограничение длины
 
-  const { data: player } = await supabaseAdmin
+  const { data: player, error: playerError } = await supabaseAdmin
     .from('players')
     .select('id')
     .eq('telegram_id', session.telegramId)
     .single();
 
-  if (!player) {
-    return res.status(404).json({ error: 'Player not found' });
+  if (playerError || !player) {
+    console.error('player lookup error:', playerError);
+    return res.status(404).json({ error: 'Player not found', details: playerError?.message });
   }
 
-  const { count } = await supabaseAdmin
+  const { count, error: countError } = await supabaseAdmin
     .from('pets')
     .select('id', { count: 'exact', head: true })
     .eq('owner_id', player.id);
+
+  if (countError) {
+    console.error('pets count error:', countError);
+    return res.status(500).json({ error: 'DB error (count)', details: countError.message });
+  }
 
   if (count >= MAX_PETS_PER_PLAYER) {
     return res.status(400).json({ error: `Максимум ${MAX_PETS_PER_PLAYER} питомцев` });
@@ -61,8 +67,8 @@ export default async function handler(req, res) {
     .single();
 
   if (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'DB error' });
+    console.error('pet insert error:', error);
+    return res.status(500).json({ error: 'DB error (insert)', details: error.message });
   }
 
   return res.status(200).json({ pet });
