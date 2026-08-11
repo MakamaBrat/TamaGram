@@ -111,17 +111,10 @@ body {
 }
 .pet-switcher-tab-active { border-color: #9b7cf5; background: rgba(155,124,245,0.35); }
 
-/* ---------------- TV (small looping video behind the pet) ---------------- */
-.tv-screen {
-  position: absolute; left: 3.6%; top: 53.9%; width: 13.6%; height: 14.7%;
-  z-index: 3; overflow: hidden; border-radius: 4px; background: #000;
-  pointer-events: none;
-}
-.tv-screen-video {
-  width: 100%; height: 100%; border: none; pointer-events: none;
-  /* scale up a touch so YouTube's own letterboxing never shows inside
-     the tiny screen cut-out */
-  transform: scale(1.4); transform-origin: center;
+/* ---------------- background video (behind room.png) ---------------- */
+.room-video-layer {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  z-index: 2; border: none; pointer-events: none; object-fit: cover;
 }
 .actions-row { display: flex; gap: 8px; padding: 14px; }
 .action-btn {

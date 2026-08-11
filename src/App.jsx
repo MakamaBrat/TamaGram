@@ -674,19 +674,16 @@ export default function App() {
               alt=""
               draggable={false}
             />
+            <iframe
+              className="room-video-layer"
+              src="https://www.youtube.com/embed/t0Q2otsqC4I?autoplay=1&mute=1&loop=1&playlist=t0Q2otsqC4I&controls=0&modestbranding=1&playsinline=1&rel=0"
+              title="tv"
+              frameBorder="0"
+              allow="autoplay; encrypted-media"
+              allowFullScreen={false}
+              tabIndex={-1}
+            />
             <img src={ASSETS.room} className="room-layer" alt="" draggable={false} />
-
-            <div className="tv-screen">
-              <iframe
-                className="tv-screen-video"
-                src="https://www.youtube.com/embed/t0Q2otsqC4I?autoplay=1&mute=1&loop=1&playlist=t0Q2otsqC4I&controls=0&modestbranding=1&playsinline=1&rel=0"
-                title="tv"
-                frameBorder="0"
-                allow="autoplay; encrypted-media"
-                allowFullScreen={false}
-                tabIndex={-1}
-              />
-            </div>
 
             <img src={ASSETS.bed} className="bed-sprite" alt="" draggable={false} />
 
