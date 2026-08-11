@@ -1,18 +1,39 @@
 // api/telegram-webhook.js
 //
-// REPLACES your existing api/telegram-webhook.js.
-// Adds support for real Telegram custom emoji (the ones from the emoji
-// panel, often Premium/animated) as an alternative to sending a GIF.
-// Custom emoji are Telegram stickers under the hood — either .webm
-// (video) or .tgs (gzipped Lottie JSON) — so we fetch the file the same
-// way as the GIF flow and store both the URL and which kind it is, so
-// the frontend knows how to play it back.
+// ИЗМЕНЕНИЕ: custom emoji из панели Telegram (.webm с альфа-каналом,
+// реже .tgs/Lottie) больше не сохраняются как отдельный custom_emoji_url —
+// они конвертируются через ffmpeg в анимированный GIF с прозрачностью и
+// пишутся в то же поле gif_url, что и обычные GIF-файлы. Это позволяет
+// использовать один и тот же GifPlayer/UniGif на клиенте без доработок.
+//
+// ВАЖНО про требования окружения:
+// 1. npm i ffmpeg-static  — даёт статический бинарник ffmpeg, который
+//    работает в Vercel serverless (обычного системного ffmpeg там нет).
+// 2. .tgs (Lottie JSON) НЕ конвертируется этим кодом — ffmpeg с ним не
+//    работает, это не видео и не картинка, а анимация покадрово по
+//    JSON-описанию. Такие эмодзи здесь просто отклоняются с понятным
+//    сообщением пользователю (см. handleCustomEmoji). Если понадобится
+//    поддержка .tgs — это отдельная история (rlottie / lottie-web +
+//    headless-рендер в кадры), сообщи отдельно.
+// 3. GIF хранит только бинарную прозрачность (0 или 255), без
+//    полутонов — для эмодзи с чёткими краями обычно выглядит нормально,
+//    для "дымчатых"/полупрозрачных эффектов возможны артефакты по краям.
+// 4. Конвертация занимает время — держи в уме таймаут функции на Vercel
+//    (по умолчанию 10с на Hobby-плане, до 60с на Pro). Если вебхук долго
+//    отвечает, Telegram может повторить доставку апдейта — идемпотентность
+//    (upsert / pending_uploads.delete в конце) уже на это рассчитана.
 
 import { supabaseAdmin as supabase } from '../lib/supabaseAdmin.js';
+import { spawn } from 'child_process';
+import { promises as fs } from 'fs';
+import path from 'path';
+import os from 'os';
+import ffmpegPath from 'ffmpeg-static';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const MAX_GIF_SIZE = 128 * 1024; // 128 KB
-const MAX_EMOJI_SIZE = 256 * 1024; // 256 KB (tgs/webm stickers are small)
+const MAX_GIF_SIZE = 128 * 1024; // 128 KB — обычные присланные GIF-файлы
+const MAX_EMOJI_SOURCE_SIZE = 256 * 1024; // 256 KB — исходный .webm/.tgs от Telegram
+const MAX_CONVERTED_GIF_SIZE = 512 * 1024; // 512 KB — итоговый GIF после конвертации (кадры + альфа занимают больше места, чем видео)
 
 async function tgApi(method, params) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -31,6 +52,66 @@ async function downloadTelegramFile(fileId) {
   const buffer = Buffer.from(await fileRes.arrayBuffer());
   const ext = filePath.split('.').pop().toLowerCase();
   return { buffer, ext };
+}
+
+// ------------------------------------------------------------
+// webm (VP8/VP9, в т.ч. с альфа-каналом) -> анимированный GIF
+// с прозрачностью, через двухпроходную палитру ffmpeg (лучшее
+// качество цвета, чем однопроходная конвертация).
+// ------------------------------------------------------------
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-2000)}`));
+    });
+  });
+}
+
+async function convertWebmToGif(webmBuffer) {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'emoji-'));
+  const inputPath = path.join(tmpDir, 'in.webm');
+  const palettePath = path.join(tmpDir, 'palette.png');
+  const outputPath = path.join(tmpDir, 'out.gif');
+
+  try {
+    await fs.writeFile(inputPath, webmBuffer);
+
+    // Проход 1: строим палитру. reserve_transparent=1 резервирует
+    // индекс под прозрачный цвет — без этого альфа-канал потеряется
+    // при квантовании в 256-цветную GIF-палитру.
+    await runFfmpeg([
+      '-y',
+      '-i', inputPath,
+      '-vf', 'fps=20,scale=200:-1:flags=lanczos,palettegen=reserve_transparent=1',
+      palettePath,
+    ]);
+
+    // Проход 2: рендерим GIF с этой палитрой.
+    // format=yuva420p сохраняет альфа-канал из исходного видео (если он
+    // там есть — Telegram custom emoji обычно кодируются именно так).
+    // paletteuse с alpha_threshold режет полупрозрачные пиксели по
+    // порогу в бинарную прозрачность, как того требует формат GIF.
+    await runFfmpeg([
+      '-y',
+      '-i', inputPath,
+      '-i', palettePath,
+      '-lavfi',
+      'fps=20,scale=200:-1:flags=lanczos,format=yuva420p[x];[x][1:v]paletteuse=alpha_threshold=128',
+      '-loop', '0',
+      outputPath,
+    ]);
+
+    const gifBuffer = await fs.readFile(outputPath);
+    return gifBuffer;
+  } finally {
+    // не блокируем ответ на очистке tmp — но и не оставляем мусор внутри инстанса
+    fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 export default async function handler(req, res) {
@@ -133,8 +214,6 @@ export default async function handler(req, res) {
 
       const { data: publicUrlData } = supabase.storage.from('pet-gifs').getPublicUrl(fileName);
 
-      // GIF, обычный emoji и custom emoji взаимоисключающие — новая
-      // картинка сбрасывает две другие.
       const { error: dbError } = await supabase
         .from('pets')
         .update({ gif_url: publicUrlData.publicUrl, emoji: null, custom_emoji_url: null, custom_emoji_type: null })
@@ -151,10 +230,9 @@ export default async function handler(req, res) {
       return res.status(200).send('ok');
     }
 
-    // --- Вариант 2: Telegram custom emoji, присланное как сообщение ---
-    // Отправка эмодзи из панели Telegram приходит как обычное текстовое
-    // сообщение с entity типа "custom_emoji" (обычный юникод-эмодзи такой
-    // entity не получает — под ним ничего делать не нужно).
+    // --- Вариант 2: Telegram custom emoji ---
+    // Присылается как текстовое сообщение с entity типа "custom_emoji"
+    // (обычный юникод-смайлик такой entity не получает).
     const customEmojiEntity = (message.entities || []).find((e) => e.type === 'custom_emoji');
 
     if (customEmojiEntity) {
@@ -178,48 +256,59 @@ export default async function handler(req, res) {
 
       const { buffer, ext } = await downloadTelegramFile(sticker.file_id);
 
-      if (buffer.length > MAX_EMOJI_SIZE) {
+      if (buffer.length > MAX_EMOJI_SOURCE_SIZE) {
         await tgApi('sendMessage', { chat_id: telegramId, text: 'Это эмодзи слишком большое, попробуйте другое.' });
         return res.status(200).send('ok');
       }
 
-      // .tgs (Lottie) или .webm (видео) — определяем по расширению файла,
-      // которое отдаёт сам Telegram, чтобы фронтенд знал, каким плеером
-      // его показывать.
-      const emojiType = ext === 'webm' ? 'webm' : 'tgs';
-      const contentType = emojiType === 'webm' ? 'video/webm' : 'application/gzip';
-      const fileName = `pet_${pending.pet_id}_emoji_${Date.now()}.${emojiType}`;
+      // .tgs — это Lottie (gzipped JSON), ffmpeg такое не декодирует.
+      // Отклоняем с понятным сообщением вместо тихого падения.
+      if (ext !== 'webm') {
+        await tgApi('sendMessage', {
+          chat_id: telegramId,
+          text: 'Это эмодзи в анимационном формате (не видео), пока такое не поддерживается. Попробуйте другое эмодзи или пришлите GIF.',
+        });
+        return res.status(200).send('ok');
+      }
+
+      let gifBuffer;
+      try {
+        gifBuffer = await convertWebmToGif(buffer);
+      } catch (convertError) {
+        console.error('ffmpeg convert error:', convertError);
+        await tgApi('sendMessage', { chat_id: telegramId, text: 'Не удалось обработать это эмодзи, попробуйте другое.' });
+        return res.status(200).send('ok');
+      }
+
+      if (gifBuffer.length > MAX_CONVERTED_GIF_SIZE) {
+        await tgApi('sendMessage', { chat_id: telegramId, text: 'Это эмодзи слишком большое после обработки, попробуйте другое.' });
+        return res.status(200).send('ok');
+      }
+
+      const fileName = `pet_${pending.pet_id}_${Date.now()}.gif`;
 
       const { error: uploadError } = await supabase.storage
         .from('pet-gifs')
-        .upload(fileName, buffer, { contentType, upsert: true });
+        .upload(fileName, gifBuffer, { contentType: 'image/gif', upsert: true });
 
       if (uploadError) {
-        console.error('pet-gifs upload error (custom emoji):', uploadError);
+        console.error('pet-gifs upload error (emoji->gif):', uploadError);
         await tgApi('sendMessage', { chat_id: telegramId, text: 'Ошибка загрузки, попробуйте ещё раз.' });
         return res.status(200).send('ok');
       }
 
       const { data: publicUrlData } = supabase.storage.from('pet-gifs').getPublicUrl(fileName);
 
+      // Пишем в то же gif_url, что и обычные GIF — клиенту не нужно
+      // знать, что исходником было custom emoji.
       const { error: dbError } = await supabase
         .from('pets')
-        .update({
-          custom_emoji_url: publicUrlData.publicUrl,
-          custom_emoji_type: emojiType,
-          gif_url: null,
-          emoji: null,
-        })
+        .update({ gif_url: publicUrlData.publicUrl, emoji: null, custom_emoji_url: null, custom_emoji_type: null })
         .eq('id', pending.pet_id);
 
       if (dbError) {
-        console.error('pets update error (custom emoji):', dbError);
-        await tgApi('sendMessage', {
-          chat_id: telegramId,
-          text:
-            'Файл загрузился, но не удалось сохранить его в базе. Скорее всего, в таблице pets ' +
-            'ещё нет колонок custom_emoji_url/custom_emoji_type — прогоните migration_add_pet_custom_emoji.sql.',
-        });
+        console.error('pets update error (emoji->gif):', dbError);
+        await tgApi('sendMessage', { chat_id: telegramId, text: 'Файл загрузился, но не удалось сохранить его в базе. Попробуйте ещё раз.' });
         return res.status(200).send('ok');
       }
 
@@ -228,10 +317,7 @@ export default async function handler(req, res) {
       return res.status(200).send('ok');
     }
 
-    // Ничего не подошло: это был текст, но не GIF/документ и без
-    // custom_emoji entity (скорее всего — обычный юникод-смайлик, а не
-    // настоящее Telegram custom emoji из панели). Не молчим, а объясняем,
-    // иначе для игрока это выглядит так, будто бот ничего не сделал.
+    // Ничего не подошло: текст, но не GIF/документ и без custom_emoji entity.
     if (pending && message.text) {
       await tgApi('sendMessage', {
         chat_id: telegramId,
