@@ -135,10 +135,16 @@ export default async function handler(req, res) {
 
       // GIF, обычный emoji и custom emoji взаимоисключающие — новая
       // картинка сбрасывает две другие.
-      await supabase
+      const { error: dbError } = await supabase
         .from('pets')
         .update({ gif_url: publicUrlData.publicUrl, emoji: null, custom_emoji_url: null, custom_emoji_type: null })
         .eq('id', pending.pet_id);
+
+      if (dbError) {
+        console.error('pets update error (gif):', dbError);
+        await tgApi('sendMessage', { chat_id: telegramId, text: 'Файл загрузился, но не удалось сохранить его в базе. Попробуйте ещё раз.' });
+        return res.status(200).send('ok');
+      }
 
       await supabase.from('pending_uploads').delete().eq('telegram_id', telegramId);
       await tgApi('sendMessage', { chat_id: telegramId, text: 'Готово! Гифка загружена питомцу 🎉' });
@@ -195,7 +201,7 @@ export default async function handler(req, res) {
 
       const { data: publicUrlData } = supabase.storage.from('pet-gifs').getPublicUrl(fileName);
 
-      await supabase
+      const { error: dbError } = await supabase
         .from('pets')
         .update({
           custom_emoji_url: publicUrlData.publicUrl,
@@ -205,8 +211,34 @@ export default async function handler(req, res) {
         })
         .eq('id', pending.pet_id);
 
+      if (dbError) {
+        console.error('pets update error (custom emoji):', dbError);
+        await tgApi('sendMessage', {
+          chat_id: telegramId,
+          text:
+            'Файл загрузился, но не удалось сохранить его в базе. Скорее всего, в таблице pets ' +
+            'ещё нет колонок custom_emoji_url/custom_emoji_type — прогоните migration_add_pet_custom_emoji.sql.',
+        });
+        return res.status(200).send('ok');
+      }
+
       await supabase.from('pending_uploads').delete().eq('telegram_id', telegramId);
       await tgApi('sendMessage', { chat_id: telegramId, text: 'Готово! Эмодзи поставлено питомцу 🎉' });
+      return res.status(200).send('ok');
+    }
+
+    // Ничего не подошло: это был текст, но не GIF/документ и без
+    // custom_emoji entity (скорее всего — обычный юникод-смайлик, а не
+    // настоящее Telegram custom emoji из панели). Не молчим, а объясняем,
+    // иначе для игрока это выглядит так, будто бот ничего не сделал.
+    if (pending && message.text) {
+      await tgApi('sendMessage', {
+        chat_id: telegramId,
+        text:
+          'Это похоже на обычный смайлик с клавиатуры, а не на Telegram-эмодзи. ' +
+          'Нужно эмодзи именно из панели эмодзи Telegram (иконка 😀 в поле ввода) — ' +
+          'вставь его туда и отправь одним сообщением. Либо пришли GIF, если так проще.',
+      });
       return res.status(200).send('ok');
     }
 
