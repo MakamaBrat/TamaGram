@@ -36,83 +36,68 @@
       </div>
     </div>
     <script>
-      // Разворачиваем Telegram Mini App на весь экран как можно раньше
-      if (window.Telegram && window.Telegram.WebApp) {
-        var tg = window.Telegram.WebApp;
+      var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+      if (tg) {
         tg.ready();
         tg.expand();
         if (tg.requestFullscreen) {
           try { tg.requestFullscreen(); } catch (e) {}
         }
-        // ВАЖНО: раньше здесь на КАЖДОЕ viewportChanged (в т.ч. открытие
-        // клавиатуры) вызывался tg.expand() — это само по себе триггерило
-        // пересчёт размеров и "дёрганье" экрана. Теперь просто игнорируем
-        // событие, вызванное клавиатурой (см. isKeyboardLikelyOpen ниже),
-        // и не дёргаем expand() в этом случае.
-        tg.onEvent("viewportChanged", function () {
-          if (!isKeyboardLikelyOpen()) {
-            tg.expand();
+      }
+
+      // ------------------------------------------------------------
+      // Фикс "экран/канвас дёргается при открытии клавиатуры" +
+      // "игра отображается некорректно после expand()":
+      //
+      // Раньше высота бралась через window.innerHeight/visualViewport —
+      // они меняются и от клавиатуры, и от expand(), и отличить одно от
+      // другого эвристикой ненадёжно (expand() у Telegram асинхронный,
+      // из-за чего высота "замораживалась" раньше времени).
+      //
+      // Правильный источник — tg.viewportStableHeight: Telegram сам
+      // гарантирует, что это значение НЕ меняется от появления клавиатуры,
+      // но корректно обновляется при реальном expand()/повороте экрана.
+      // Вне Telegram (обычный браузер, тест) используем visualViewport.
+      // ------------------------------------------------------------
+      function currentStableHeight() {
+        if (tg && tg.viewportStableHeight) return tg.viewportStableHeight;
+        return (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+      }
+
+      function lockAppHeight() {
+        document.documentElement.style.setProperty('--app-height', currentStableHeight() + 'px');
+      }
+
+      lockAppHeight();
+      // Подстраховка: на некоторых устройствах viewportStableHeight
+      // проставляется не в первый же тик после ready()/expand().
+      setTimeout(lockAppHeight, 300);
+
+      if (tg) {
+        // Стреляет и на expand/collapse, и на открытие клавиатуры — но
+        // viewportStableHeight внутри уже не включает клавиатуру, так что
+        // просто всегда пересчитываем из него, без дополнительных условий.
+        tg.onEvent("viewportChanged", lockAppHeight);
+      } else if (window.visualViewport) {
+        // Вне Telegram (тест в обычном мобильном браузере) стабильного
+        // значения нет — просто дополнительно защищаемся от прыжков при
+        // клавиатуре: обновляем только при заметном изменении (поворот),
+        // а на маленькие уменьшения (клавиатура) не реагируем.
+        var initialHeight = currentStableHeight();
+        window.visualViewport.addEventListener('resize', function () {
+          var h = currentStableHeight();
+          if (Math.abs(h - initialHeight) > 120) {
+            initialHeight = h;
+            lockAppHeight();
+          } else {
+            window.scrollTo(0, 0);
           }
         });
       }
 
-      // ------------------------------------------------------------
-      // Фикс "экран/канвас дёргается при открытии клавиатуры":
-      // мобильные браузеры и Telegram WebView при появлении системной
-      // клавиатуры уменьшают window.innerHeight / visualViewport.height —
-      // а CSS у нас был завязан на 100vh, из-за чего канвас каждый раз
-      // пересчитывал размер и "прыгал". Фиксируем высоту один раз при
-      // загрузке страницы (до появления клавиатуры) и не даём клавиатуре
-      // её менять; пересчитываем только при реальном повороте экрана.
-      // ------------------------------------------------------------
-      var initialViewportHeight = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
-
-      function lockAppHeight(h) {
-        document.documentElement.style.setProperty('--app-height', h + 'px');
-      }
-      lockAppHeight(initialViewportHeight);
-
-      // Открытие клавиатуры уменьшает высоту минимум на ~120px на любом
-      // реальном устройстве — этим отличаем "открылась клавиатура" от
-      // "пользователь повернул телефон" (там высота и ширина меняются местами).
-      function isKeyboardLikelyOpen() {
-        var currentHeight = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
-        return currentHeight < initialViewportHeight - 120;
-      }
-
-      function handleViewportResize() {
-        var currentHeight = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
-
-        // Если высота уменьшилась не из-за поворота экрана (ширина не
-        // поменялась местами с высотой) — считаем, что это клавиатура,
-        // и НЕ трогаем зафиксированную высоту канваса.
-        if (isKeyboardLikelyOpen()) {
-          // Дополнительно принудительно возвращаем страницу в исходное
-          // положение — некоторые мобильные браузеры пытаются проскроллить
-          // к сфокусированному полю ввода даже при position: fixed.
-          window.scrollTo(0, 0);
-          document.body.scrollTop = 0;
-          return;
-        }
-
-        // Настоящий поворот экрана / реальный ресайз окна — пересчитываем.
-        initialViewportHeight = currentHeight;
-        lockAppHeight(currentHeight);
-      }
-
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', handleViewportResize);
-      } else {
-        window.addEventListener('resize', handleViewportResize);
-      }
-
       window.addEventListener('orientationchange', function () {
-        // небольшая задержка, чтобы браузер успел применить новую ориентацию
-        setTimeout(function () {
-          var h = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
-          initialViewportHeight = h;
-          lockAppHeight(h);
-        }, 300);
+        setTimeout(lockAppHeight, 300);
       });
 
       var canvas = document.querySelector("#unity-canvas");
