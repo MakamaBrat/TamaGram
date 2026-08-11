@@ -21,9 +21,10 @@ body {
    that the parallax drift never reveals their edges through the window.
    The room sprite is opaque everywhere except the window, so it masks
    these layers into just that cut-out as they shift. */
-/* top nudged up from the window's raw center (54.38%) so the skyline
-   sits higher in the cut-out, closer to the top edge of the window. */
-.parallax-layer { position: absolute; left: 66.31%; top: 46%; will-change: transform; transition: transform 0.05s linear; }
+/* top nudged up from the window's raw center (54.38%), then nudged up
+   again (46% -> 42%) so the skyline sits higher still in the cut-out,
+   closer to the top edge of the window. */
+.parallax-layer { position: absolute; left: 66.31%; top: 42%; will-change: transform; transition: transform 0.05s linear; }
 .sky-layer { width: 96%; z-index: 1; }
 .city-layer { width: 82%; z-index: 2; }
 .room-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 3; pointer-events: none; }
@@ -50,6 +51,9 @@ body {
    a subtle up-down bob, so it reads as little paws stepping while the pet
    is being dragged or wandering on its own between corners of the room. */
 .pet-walk { animation: petWalk 0.32s ease-in-out infinite; }
+/* thrown/falling — a slight vertical stretch so the arc through the air
+   reads as motion rather than the idle bob. */
+.pet-falling { animation: petFall 0.5s ease-in-out infinite; }
 .pet-zone-dragging .pet-sprite { animation: petWalk 0.22s ease-in-out infinite; }
 .pet-emoji-overlay { position: absolute; top: -10%; right: 0; font-size: 2.2rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
 @keyframes idleBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
@@ -60,6 +64,10 @@ body {
   50%  { transform: translateY(0) rotate(0deg); }
   75%  { transform: translateY(-3px) rotate(2.5deg); }
   100% { transform: translateY(0) rotate(0deg); }
+}
+@keyframes petFall {
+  0%, 100% { transform: scale(0.94, 1.06); }
+  50%      { transform: scale(1, 1); }
 }
 
 .emote-bubble {
@@ -81,6 +89,7 @@ body {
 }
 .pet-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .pet-name { font-size: 1.2rem; margin: 0; }
+.pet-age { font-size: 0.68rem; opacity: 0.6; display: block; margin-top: 2px; }
 .edit-btn { background: none; border: none; font-size: 1rem; cursor: pointer; opacity: 0.8; }
 .stat-list { display: flex; flex-direction: column; gap: 8px; }
 .stat-row { display: flex; align-items: center; gap: 6px; }
@@ -90,7 +99,30 @@ body {
 .stat-track { background: rgba(255,255,255,0.12); border-radius: 999px; height: 6px; overflow: hidden; }
 .stat-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
 
-/* ---------------- actions ---------------- */
+/* ---------------- pet switcher (multiple pets) ---------------- */
+.pet-switcher {
+  position: absolute; top: 14%; right: 4%; display: flex; gap: 6px;
+  z-index: 5; flex-wrap: wrap; justify-content: flex-end; max-width: 44%;
+}
+.pet-switcher-tab {
+  width: 32px; height: 32px; border-radius: 50%; font-size: 1rem;
+  background: rgba(15,12,32,0.75); border: 1px solid rgba(255,255,255,0.12);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.pet-switcher-tab-active { border-color: #9b7cf5; background: rgba(155,124,245,0.35); }
+
+/* ---------------- TV (small looping video behind the pet) ---------------- */
+.tv-screen {
+  position: absolute; left: 3.6%; top: 53.9%; width: 13.6%; height: 14.7%;
+  z-index: 3; overflow: hidden; border-radius: 4px; background: #000;
+  pointer-events: none;
+}
+.tv-screen-video {
+  width: 100%; height: 100%; border: none; pointer-events: none;
+  /* scale up a touch so YouTube's own letterboxing never shows inside
+     the tiny screen cut-out */
+  transform: scale(1.4); transform-origin: center;
+}
 .actions-row { display: flex; gap: 8px; padding: 14px; }
 .action-btn {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
@@ -114,18 +146,25 @@ body {
 
 /* ---------------- create pet screen ---------------- */
 .create-pet-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 24px; text-align: center; }
-.create-pet-preview { width: 55%; max-width: 260px; margin-bottom: 16px; }
+.create-pet-preview-wrap { position: relative; width: 55%; max-width: 260px; margin-bottom: 16px; }
+.create-pet-preview { width: 100%; display: block; }
+.create-pet-preview-emoji { position: absolute; top: -6%; right: -2%; font-size: 2.4rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
 .create-pet-sub { opacity: 0.7; margin-top: 4px; }
-.create-pet-form { display: flex; gap: 8px; margin-top: 20px; width: 100%; max-width: 320px; }
+.create-pet-form { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; width: 100%; max-width: 320px; }
 .create-pet-form input { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: #fff; }
-.create-pet-form button { padding: 12px 18px; border-radius: 12px; border: none; background: linear-gradient(180deg, #9b7cf5, #6a3fd6); color: #fff; font-weight: 700; cursor: pointer; }
+.create-pet-emoji-grid { margin-top: 4px; margin-bottom: 4px; }
+.create-pet-form button[type="submit"] { padding: 12px 18px; border-radius: 12px; border: none; background: linear-gradient(180deg, #9b7cf5, #6a3fd6); color: #fff; font-weight: 700; cursor: pointer; }
+.create-pet-cancel { padding: 10px 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); color: #fff; cursor: pointer; }
 .create-pet-error { color: #ff6b6b; margin-top: 10px; }
 
 /* ---------------- modal ---------------- */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: flex-end; justify-content: center; z-index: 30; }
 .modal { background: #16122c; border-radius: 20px 20px 0 0; padding: 20px; width: 100%; max-width: 480px; }
+.modal-create-pet { padding-top: 8px; max-height: 88vh; overflow-y: auto; }
+.modal-create-pet .create-pet-screen { height: auto; padding: 8px; }
 .modal h2 { margin-top: 0; }
-.modal-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.modal-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 10px; }
+.appearance-hint { opacity: 0.7; font-size: 0.82rem; line-height: 1.4; margin-top: -4px; }
 .segmented { display: flex; background: rgba(255,255,255,0.08); border-radius: 999px; padding: 3px; margin-bottom: 14px; }
 .segmented button { flex: 1; background: none; border: none; color: #fff; padding: 8px; border-radius: 999px; cursor: pointer; opacity: 0.7; }
 .segmented .seg-active { background: #6a3fd6; opacity: 1; }
@@ -134,5 +173,8 @@ body {
 .emoji-choice-active { border-color: #9b7cf5; background: rgba(155,124,245,0.2); }
 .gif-tab p { opacity: 0.85; line-height: 1.4; }
 .modal-primary { width: 100%; padding: 12px; border-radius: 12px; border: none; background: linear-gradient(180deg, #4fc3f7, #1e88c7); color: #fff; font-weight: 700; cursor: pointer; margin-top: 8px; }
+.modal-primary-compact { width: auto; padding: 8px 14px; margin-top: 0; font-size: 0.82rem; white-space: nowrap; }
+.modal-primary:disabled, .modal-danger:disabled { opacity: 0.5; cursor: default; }
+.modal-danger { padding: 8px 14px; border-radius: 12px; border: 1px solid rgba(255,107,107,0.4); background: rgba(255,107,107,0.12); color: #ff8a8a; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .gif-current-hint { opacity: 0.6; font-size: 0.8rem; }
 .modal-close, .modal-reset { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); color: #fff; cursor: pointer; margin-top: 10px; }

@@ -4,7 +4,10 @@
 // app replaces the old Unity client but speaks the exact same protocol:
 // - POST /api/auth            { initData }              -> { player, pets, sessionToken }
 // - GET  /api/player-state     (Bearer session)          -> { player, pets }
-// - POST /api/create-pet      { name }  (Bearer session) -> { pet }
+// - POST /api/create-pet      { name, emoji }  (Bearer session) -> { pet }
+//   (name + emoji are set once, at creation — no endpoint edits them after)
+// - POST /api/delete-pet      { petId } (Bearer session) -> { ok, petId }
+//   (new endpoint, see api/delete-pet.js added alongside this app)
 // - POST /api/pet-action      { petId, action } (Bearer) -> { pet }
 // - POST /api/set-pet-appearance { petId, emoji } (Bearer) -> { pet }
 //   (new endpoint, see api/set-pet-appearance.js added alongside this app)
@@ -70,8 +73,12 @@ export function getPlayerState() {
   return request('player-state', { method: 'GET' });
 }
 
-export function createPet(name) {
-  return request('create-pet', { method: 'POST', body: { name } });
+export function createPet(name, emoji) {
+  return request('create-pet', { method: 'POST', body: { name, emoji } });
+}
+
+export function deletePet(petId) {
+  return request('delete-pet', { method: 'POST', body: { petId } });
 }
 
 export function petAction(petId, action) {

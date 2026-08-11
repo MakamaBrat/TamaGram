@@ -17,6 +17,31 @@ function formatCooldown(sec) {
   return m > 0 ? `${m}м ${s}с` : `${s}с`;
 }
 
+function formatAge(createdAt, now) {
+  if (!createdAt) return null;
+  const ms = Math.max(0, now - new Date(createdAt).getTime());
+  const minutes = Math.floor(ms / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const months = Math.floor(days / 30);
+  const years = Math.floor(days / 365);
+
+  if (years >= 1) return `${years} ${plural(years, 'год', 'года', 'лет')}`;
+  if (months >= 1) return `${months} ${plural(months, 'месяц', 'месяца', 'месяцев')}`;
+  if (days >= 1) return `${days} ${plural(days, 'день', 'дня', 'дней')}`;
+  if (hours >= 1) return `${hours} ${plural(hours, 'час', 'часа', 'часов')}`;
+  if (minutes >= 1) return `${minutes} ${plural(minutes, 'минуту', 'минуты', 'минут')}`;
+  return 'только что родился';
+}
+
+function plural(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
 const STAT_META = {
   happiness: { label: 'Happiness', color: '#ff5f87', emoji: '❤️' },
   hunger: { label: 'Hunger', color: '#f5a623', emoji: '🍔' },
@@ -101,8 +126,9 @@ function useAuth() {
 /*  Create-pet screen (shown when the player has none)                 */
 /* ------------------------------------------------------------------ */
 
-function CreatePetScreen({ onCreated }) {
+function CreatePetScreen({ onCreated, onCancel }) {
   const [name, setName] = useState('');
+  const [emoji, setEmoji] = useState(EMOJI_CHOICES[0]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -112,7 +138,7 @@ function CreatePetScreen({ onCreated }) {
     setBusy(true);
     setErr(null);
     try {
-      const { pet } = await api.createPet(name.trim());
+      const { pet } = await api.createPet(name.trim(), emoji);
       onCreated(pet);
     } catch (e) {
       setErr(e.message);
@@ -123,9 +149,14 @@ function CreatePetScreen({ onCreated }) {
 
   return (
     <div className="create-pet-screen">
-      <img src={ASSETS.basePet} className="create-pet-preview" alt="" draggable={false} />
+      <div className="create-pet-preview-wrap">
+        <img src={ASSETS.basePet} className="create-pet-preview" alt="" draggable={false} />
+        <span className="create-pet-preview-emoji">{emoji}</span>
+      </div>
       <h1>Заведи питомца</h1>
-      <p className="create-pet-sub">Дай ему имя — остальное решит сервер.</p>
+      <p className="create-pet-sub">
+        Дай ему имя и лицо — это можно выбрать только сейчас, потом поменять будет нельзя.
+      </p>
       <form onSubmit={submit} className="create-pet-form">
         <input
           value={name}
@@ -134,9 +165,26 @@ function CreatePetScreen({ onCreated }) {
           placeholder="Имя питомца"
           autoFocus
         />
+        <div className="emoji-grid create-pet-emoji-grid">
+          {EMOJI_CHOICES.map((e) => (
+            <button
+              type="button"
+              key={e}
+              className={`emoji-choice ${emoji === e ? 'emoji-choice-active' : ''}`}
+              onClick={() => setEmoji(e)}
+            >
+              {e}
+            </button>
+          ))}
+        </div>
         <button type="submit" disabled={busy || !name.trim()}>
           {busy ? '...' : 'Завести'}
         </button>
+        {onCancel && (
+          <button type="button" className="create-pet-cancel" onClick={onCancel} disabled={busy}>
+            Отмена
+          </button>
+        )}
       </form>
       {err && <p className="create-pet-error">{err}</p>}
     </div>
@@ -148,21 +196,8 @@ function CreatePetScreen({ onCreated }) {
 /* ------------------------------------------------------------------ */
 
 function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
-  const [tab, setTab] = useState('emoji');
+  const [tab, setTab] = useState('tgemoji');
   const [saving, setSaving] = useState(false);
-
-  async function pickEmoji(emoji) {
-    setSaving(true);
-    try {
-      const { pet: updated } = await api.setPetAppearance(pet.id, { emoji, clearGif: true });
-      onUpdated(updated);
-      onClose();
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
 
   function openBotForGif() {
     if (!botUsername) {
@@ -176,10 +211,12 @@ function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Внешность питомца</h2>
+        <p className="appearance-hint">
+          Имя и обычное эмодзи-лицо {pet.emoji ? <span>({pet.emoji}) </span> : ''}
+          были выбраны при создании и больше не меняются. Но можно поставить
+          настоящее Telegram-эмодзи или свою GIF поверх.
+        </p>
         <div className="segmented">
-          <button className={tab === 'emoji' ? 'seg-active' : ''} onClick={() => setTab('emoji')}>
-            Эмодзи
-          </button>
           <button className={tab === 'tgemoji' ? 'seg-active' : ''} onClick={() => setTab('tgemoji')}>
             TG-эмодзи
           </button>
@@ -188,28 +225,13 @@ function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
           </button>
         </div>
 
-        {tab === 'emoji' && (
-          <div className="emoji-grid">
-            {EMOJI_CHOICES.map((e) => (
-              <button
-                key={e}
-                className={`emoji-choice ${pet.emoji === e ? 'emoji-choice-active' : ''}`}
-                disabled={saving}
-                onClick={() => pickEmoji(e)}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        )}
-
         {tab === 'tgemoji' && (
           <div className="gif-tab">
             <p>
               Открой бота и пришли туда одно эмодзи из панели Telegram (обычной
               или Premium-анимированной) — оно станет лицом питомца.
             </p>
-            <button className="modal-primary" onClick={openBotForGif}>
+            <button className="modal-primary" onClick={openBotForGif} disabled={saving}>
               Отправить эмодзи боту
             </button>
             {pet.custom_emoji_url && <p className="gif-current-hint">Сейчас установлено Telegram-эмодзи.</p>}
@@ -222,7 +244,7 @@ function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
               Нажми кнопку ниже, откроется бот — пришли ему GIF (до 128 КБ), и он
               автоматически станет картинкой питомца.
             </p>
-            <button className="modal-primary" onClick={openBotForGif}>
+            <button className="modal-primary" onClick={openBotForGif} disabled={saving}>
               Отправить GIF боту
             </button>
             {pet.gif_url && <p className="gif-current-hint">Сейчас установлена своя GIF.</p>}
@@ -256,6 +278,8 @@ export default function App() {
   const [cooldowns, setCooldowns] = useState({}); // action -> retryAt (ms)
   const [manualDayOverride, setManualDayOverride] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addPetOpen, setAddPetOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const bubbleTimeoutRef = useRef(null);
   const toastTimeoutRef = useRef(null);
@@ -271,9 +295,94 @@ export default function App() {
   const [facing, setFacing] = useState(1); // 1 = facing right, -1 = facing left
   const [walking, setWalking] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [falling, setFalling] = useState(false);
   const petDragRef = useRef({ moved: false, lastX: 50 });
   const walkTimeoutRef = useRef(null);
   const wanderIntervalRef = useRef(null);
+
+  /* ---------------- throw physics: gravity + wall bounce ---------------- */
+  // After a drag-release ("throw"), the pet isn't just dropped where the
+  // pointer let go — it keeps the pointer's last swipe velocity, gravity
+  // pulls it down, and it bounces off the room's left/right/top/bottom
+  // bounds (losing a bit of energy each bounce) until it settles, at
+  // which point normal autonomous wandering resumes.
+  const GRAVITY = 0.85; // % / frame^2
+  const RESTITUTION = 0.52; // energy kept per bounce
+  const FLOOR_FRICTION = 0.85; // horizontal speed kept on floor bounce
+  const trailRef = useRef([]); // recent {x, y, t} samples, for throw velocity
+  const physicsRef = useRef({ x: 50, y: 78, vx: 0, vy: 0 });
+  const physicsRafRef = useRef(null);
+
+  const stopPhysics = useCallback(() => {
+    if (physicsRafRef.current) {
+      cancelAnimationFrame(physicsRafRef.current);
+      physicsRafRef.current = null;
+    }
+  }, []);
+
+  const runPhysics = useCallback(() => {
+    const p = physicsRef.current;
+    p.vy += GRAVITY;
+    p.x += p.vx;
+    p.y += p.vy;
+
+    let bounced = false;
+
+    if (p.x <= ROOM_BOUNDS.left) {
+      p.x = ROOM_BOUNDS.left;
+      p.vx = Math.abs(p.vx) * RESTITUTION;
+      setFacing(1);
+      bounced = true;
+    } else if (p.x >= ROOM_BOUNDS.right) {
+      p.x = ROOM_BOUNDS.right;
+      p.vx = -Math.abs(p.vx) * RESTITUTION;
+      setFacing(-1);
+      bounced = true;
+    }
+
+    if (p.y >= ROOM_BOUNDS.bottom) {
+      p.y = ROOM_BOUNDS.bottom;
+      p.vy = -Math.abs(p.vy) * RESTITUTION;
+      p.vx *= FLOOR_FRICTION;
+      bounced = true;
+    } else if (p.y <= ROOM_BOUNDS.top) {
+      p.y = ROOM_BOUNDS.top;
+      p.vy = Math.abs(p.vy) * RESTITUTION;
+      bounced = true;
+    }
+
+    if (bounced) {
+      setPetBounce(true);
+      setTimeout(() => setPetBounce(false), 380);
+    }
+
+    setPetPos({ x: p.x, y: p.y });
+
+    const atRest =
+      p.y >= ROOM_BOUNDS.bottom - 0.5 &&
+      Math.abs(p.vx) < 0.15 &&
+      Math.abs(p.vy) < 0.9;
+
+    if (atRest) {
+      setFalling(false);
+      physicsRafRef.current = null;
+      scheduleNextWander();
+      return;
+    }
+
+    physicsRafRef.current = requestAnimationFrame(runPhysics);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startPhysics = useCallback((x, y, vx, vy) => {
+    clearTimeout(wanderIntervalRef.current);
+    clearTimeout(walkTimeoutRef.current);
+    stopPhysics();
+    physicsRef.current = { x, y, vx, vy };
+    setFalling(true);
+    setWalking(false);
+    physicsRafRef.current = requestAnimationFrame(runPhysics);
+  }, [runPhysics, stopPhysics]);
 
   const clampToBounds = useCallback((x, y) => ({
     x: clamp(x, ROOM_BOUNDS.left, ROOM_BOUNDS.right),
@@ -292,7 +401,10 @@ export default function App() {
 
   const handlePetPointerDown = useCallback((e) => {
     e.preventDefault();
+    stopPhysics();
+    setFalling(false);
     petDragRef.current = { moved: false, lastX: petPos.x };
+    trailRef.current = [{ x: petPos.x, y: petPos.y, t: performance.now() }];
     setDragging(true);
     clearTimeout(walkTimeoutRef.current);
 
@@ -305,6 +417,10 @@ export default function App() {
         setFacing(next.x > petDragRef.current.lastX ? 1 : -1);
       }
       petDragRef.current = { moved: true, lastX: next.x };
+      // keep a short trail of recent samples so release velocity reflects
+      // the actual swipe, not just the last (possibly stationary) pixel
+      trailRef.current.push({ x: next.x, y: next.y, t: performance.now() });
+      if (trailRef.current.length > 6) trailRef.current.shift();
       setPetPos(next);
     }
     function onUp() {
@@ -318,7 +434,14 @@ export default function App() {
         setAppearanceOpen(true);
       } else {
         showBubble('💫');
-        scheduleNextWander();
+        const trail = trailRef.current;
+        const first = trail[0];
+        const last = trail[trail.length - 1];
+        const dt = Math.max(16, last.t - first.t);
+        // scale pointer swipe speed (%/ms) into per-frame (~16.7ms) velocity
+        const vx = clamp(((last.x - first.x) / dt) * 16.7, -6, 6);
+        const vy = clamp(((last.y - first.y) / dt) * 16.7, -8, 8);
+        startPhysics(last.x, last.y, vx, vy);
       }
     }
     window.addEventListener('pointermove', onMove);
@@ -326,7 +449,7 @@ export default function App() {
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onUp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [petPos.x, pointToPct, clampToBounds]);
+  }, [petPos.x, petPos.y, pointToPct, clampToBounds, stopPhysics, startPhysics]);
 
   function walkTo(target) {
     setFacing(target.x >= petPos.x ? 1 : -1);
@@ -355,6 +478,7 @@ export default function App() {
     return () => {
       clearTimeout(wanderIntervalRef.current);
       clearTimeout(walkTimeoutRef.current);
+      stopPhysics();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -475,6 +599,24 @@ export default function App() {
     }
   }
 
+  async function deleteActivePet() {
+    if (!pet || deleting) return;
+    const sure = window.confirm(`Удалить питомца «${pet.name}» навсегда? Это нельзя отменить.`);
+    if (!sure) return;
+    setDeleting(true);
+    try {
+      await api.deletePet(pet.id);
+      setPets((prev) => prev.filter((p) => p.id !== pet.id));
+      setActivePetId(null); // next effect picks the first remaining pet, or none
+      setSettingsOpen(false);
+      showToast('Питомец удалён');
+    } catch (e) {
+      showToast(e.message || 'Не удалось удалить');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (status === 'loading') {
     return (
       <div className="app-root">
@@ -534,6 +676,18 @@ export default function App() {
             />
             <img src={ASSETS.room} className="room-layer" alt="" draggable={false} />
 
+            <div className="tv-screen">
+              <iframe
+                className="tv-screen-video"
+                src="https://www.youtube.com/embed/t0Q2otsqC4I?autoplay=1&mute=1&loop=1&playlist=t0Q2otsqC4I&controls=0&modestbranding=1&playsinline=1&rel=0"
+                title="tv"
+                frameBorder="0"
+                allow="autoplay; encrypted-media"
+                allowFullScreen={false}
+                tabIndex={-1}
+              />
+            </div>
+
             <img src={ASSETS.bed} className="bed-sprite" alt="" draggable={false} />
 
             <div
@@ -551,7 +705,7 @@ export default function App() {
                 {pet.gif_url ? (
                   <img
                     src={pet.gif_url}
-                    className={`pet-sprite ${petBounce ? 'pet-bounce' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
+                    className={`pet-sprite ${petBounce ? 'pet-bounce' : falling ? 'pet-falling' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
                     alt={pet.name}
                     draggable={false}
                   />
@@ -559,13 +713,13 @@ export default function App() {
                   <CustomEmojiFace
                     url={pet.custom_emoji_url}
                     type={pet.custom_emoji_type}
-                    className={`pet-sprite pet-custom-emoji ${petBounce ? 'pet-bounce' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
+                    className={`pet-sprite pet-custom-emoji ${petBounce ? 'pet-bounce' : falling ? 'pet-falling' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
                   />
                 ) : (
                   <>
                     <img
                       src={ASSETS.basePet}
-                      className={`pet-sprite ${petBounce ? 'pet-bounce' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
+                      className={`pet-sprite ${petBounce ? 'pet-bounce' : falling ? 'pet-falling' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
                       alt={pet.name}
                       draggable={false}
                     />
@@ -588,9 +742,27 @@ export default function App() {
               </button>
             </div>
 
+            {pets.length > 1 && (
+              <div className="pet-switcher">
+                {pets.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`pet-switcher-tab ${p.id === pet.id ? 'pet-switcher-tab-active' : ''}`}
+                    onClick={() => setActivePetId(p.id)}
+                    title={p.name}
+                  >
+                    {p.emoji || '🐾'}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="pet-card">
               <div className="pet-card-head">
-                <h1 className="pet-name">{pet.name}</h1>
+                <div>
+                  <h1 className="pet-name">{pet.name}</h1>
+                  <span className="pet-age">{formatAge(pet.created_at, now)}</span>
+                </div>
                 <button className="edit-btn" onClick={() => setAppearanceOpen(true)} aria-label="appearance">
                   🖼️
                 </button>
@@ -652,9 +824,46 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              <div className="modal-row">
+                <span>Питомцы ({pets.length}/5)</span>
+                <button
+                  className="modal-primary modal-primary-compact"
+                  disabled={pets.length >= 5}
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    setAddPetOpen(true);
+                  }}
+                >
+                  + Новый питомец
+                </button>
+              </div>
+
+              <div className="modal-row">
+                <span>Удалить «{pet.name}»</span>
+                <button className="modal-danger" onClick={deleteActivePet} disabled={deleting}>
+                  {deleting ? '...' : '🗑 Удалить'}
+                </button>
+              </div>
+
               <button className="modal-close" onClick={() => setSettingsOpen(false)}>
                 Закрыть
               </button>
+            </div>
+          </div>
+        )}
+
+        {addPetOpen && (
+          <div className="modal-backdrop" onClick={() => setAddPetOpen(false)}>
+            <div className="modal modal-create-pet" onClick={(e) => e.stopPropagation()}>
+              <CreatePetScreen
+                onCreated={(newPet) => {
+                  setPets((prev) => [...prev, newPet]);
+                  setActivePetId(newPet.id);
+                  setAddPetOpen(false);
+                }}
+                onCancel={() => setAddPetOpen(false)}
+              />
             </div>
           </div>
         )}

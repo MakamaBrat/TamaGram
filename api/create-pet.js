@@ -3,12 +3,17 @@
 // Unity вызывает при нажатии "Завести питомца".
 // Сервер сам решает стартовые параметры (100/50/50/50 и т.п.) —
 // клиент не может подсунуть свои значения при создании.
+//
+// Имя и эмодзи-лицо питомца задаются ТОЛЬКО здесь, при создании — после
+// этого их поменять нельзя (см. src/App.jsx: AppearanceModal больше не
+// даёт выбрать обычный эмодзи, только TG-эмодзи/GIF).
 
 import { supabaseAdmin } from '../lib/supabaseAdmin.js';
 import { verifySession } from '../lib/verifySession.js';
 import { applyCors } from '../lib/cors.js';
 
 const MAX_PETS_PER_PLAYER = 5; // защита от спама созданием
+const MAX_EMOJI_LENGTH = 8; // генеральный запас под эмодзи + variation selector
 
 export default async function handler(req, res) {
   if (applyCors(req, res)) return;
@@ -25,8 +30,16 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid or expired session' });
   }
 
-  const { name } = req.body;
+  const { name, emoji } = req.body;
   const petName = (name || 'Pet').toString().slice(0, 32); // ограничение длины
+
+  let petEmoji = null;
+  if (emoji !== undefined && emoji !== null && emoji !== '') {
+    if (typeof emoji !== 'string' || emoji.length > MAX_EMOJI_LENGTH) {
+      return res.status(400).json({ error: 'Invalid emoji' });
+    }
+    petEmoji = emoji;
+  }
 
   const { data: player, error: playerError } = await supabaseAdmin
     .from('players')
@@ -58,6 +71,7 @@ export default async function handler(req, res) {
     .insert({
       owner_id: player.id,
       name: petName,
+      emoji: petEmoji,
       happiness: 50,
       hunger: 50,
       energy: 50,
