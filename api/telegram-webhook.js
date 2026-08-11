@@ -195,6 +195,7 @@ export default async function handler(req, res) {
         .upload(fileName, buffer, { contentType, upsert: true });
 
       if (uploadError) {
+        console.error('pet-gifs upload error (custom emoji):', uploadError);
         await tgApi('sendMessage', { chat_id: telegramId, text: 'Ошибка загрузки, попробуйте ещё раз.' });
         return res.status(200).send('ok');
       }
