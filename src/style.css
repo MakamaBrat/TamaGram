@@ -111,9 +111,14 @@ body {
 }
 .pet-switcher-tab-active { border-color: #9b7cf5; background: rgba(155,124,245,0.35); }
 
-/* ---------------- background video (behind room.png) ---------------- */
+/* ---------------- TV video (sits behind room.png, in the CRT's cut-out) ---------------- */
+/* room.png has a transparent square where the CRT screen is; the iframe is
+   sized/positioned to exactly that hole so it only shows through the TV,
+   not across the whole scene. Coordinates measured from room.png's alpha
+   channel, translated into the visible (object-fit: cover) crop of the room-layer. */
 .room-video-layer {
-  position: absolute; inset: 0; width: 100%; height: 100%;
+  position: absolute;
+  left: 4.9%; top: 57.8%; width: 12.5%; height: 8.6%;
   z-index: 2; border: none; pointer-events: none; object-fit: cover;
 }
 .actions-row { display: flex; gap: 8px; padding: 14px; }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { ASSETS, EMOJI_CHOICES } from './assets';
+import { ASSETS } from './assets';
 import CustomEmojiFace from './CustomEmojiFace';
 import * as api from './api';
 
@@ -128,7 +128,6 @@ function useAuth() {
 
 function CreatePetScreen({ onCreated, onCancel }) {
   const [name, setName] = useState('');
-  const [emoji, setEmoji] = useState(EMOJI_CHOICES[0]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -138,7 +137,9 @@ function CreatePetScreen({ onCreated, onCancel }) {
     setBusy(true);
     setErr(null);
     try {
-      const { pet } = await api.createPet(name.trim(), emoji);
+      // Face isn't picked here anymore — only name. Premium TG-emoji/GIF
+      // face can be set afterwards from the Appearance modal.
+      const { pet } = await api.createPet(name.trim(), null);
       onCreated(pet);
     } catch (e) {
       setErr(e.message);
@@ -151,12 +152,9 @@ function CreatePetScreen({ onCreated, onCancel }) {
     <div className="create-pet-screen">
       <div className="create-pet-preview-wrap">
         <img src={ASSETS.basePet} className="create-pet-preview" alt="" draggable={false} />
-        <span className="create-pet-preview-emoji">{emoji}</span>
       </div>
       <h1>Заведи питомца</h1>
-      <p className="create-pet-sub">
-        Дай ему имя и лицо — это можно выбрать только сейчас, потом поменять будет нельзя.
-      </p>
+      <p className="create-pet-sub">Дай ему имя.</p>
       <form onSubmit={submit} className="create-pet-form">
         <input
           value={name}
@@ -165,18 +163,6 @@ function CreatePetScreen({ onCreated, onCancel }) {
           placeholder="Имя питомца"
           autoFocus
         />
-        <div className="emoji-grid create-pet-emoji-grid">
-          {EMOJI_CHOICES.map((e) => (
-            <button
-              type="button"
-              key={e}
-              className={`emoji-choice ${emoji === e ? 'emoji-choice-active' : ''}`}
-              onClick={() => setEmoji(e)}
-            >
-              {e}
-            </button>
-          ))}
-        </div>
         <button type="submit" disabled={busy || !name.trim()}>
           {busy ? '...' : 'Завести'}
         </button>
