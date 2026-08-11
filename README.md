@@ -11,23 +11,31 @@ existing Vercel + Supabase backend (`/api/auth`, `/api/player-state`,
   `GET /api/player-state`, actions (Feed/Wash/Play/Sleep) call
   `POST /api/pet-action` and respect the server's cooldowns.
 - **Set the pet's picture** — tap the pet (or the 🖼️ icon) to open the
-  appearance sheet:
-  - **Emoji tab**: pick one of a preset grid, saved instantly via a new
-    endpoint, `POST /api/set-pet-appearance` (included in
-    `backend-additions/api/set-pet-appearance.js` — copy it into your
-    existing `/api` folder).
-  - **GIF tab**: deep-links into your Telegram bot (`/start pet_<id>`),
-    reusing the upload flow already in `api/telegram-webhook.js`. The app
-    polls `player-state` every 15s so the new `gif_url` shows up without
-    a manual refresh. If a GIF is set it takes priority over the emoji.
+  appearance sheet, three tabs:
+  - **Эмодзи**: pick a plain unicode emoji from a preset grid, saved
+    instantly via `POST /api/set-pet-appearance`.
+  - **TG-эмодзи**: real Telegram custom emoji (the ones from the emoji
+    panel, including Premium/animated ones). Deep-links into your bot;
+    the player sends one emoji as a message, the webhook detects the
+    `custom_emoji` entity, fetches the sticker via
+    `getCustomEmojiStickers` + `getFile`, and stores it (`.webm` video or
+    `.tgs` Lottie — both are supported, rendered with `<video>` or
+    `lottie-web` respectively).
+  - **GIF**: same deep-link flow, player sends a GIF file instead.
+  
+  All three are mutually exclusive — setting one clears the other two.
+  Priority when rendering: GIF → custom emoji → plain emoji → default art.
 
 ## Backend changes needed
 
 1. Copy `backend-additions/api/set-pet-appearance.js` into your `/api` folder.
-2. Run `backend-additions/migration_add_pet_emoji.sql` in the Supabase SQL
-   editor (adds `pets.emoji` and refreshes the `pets_with_owner` view).
-3. In `src/App.jsx`, set `BOT_USERNAME` to your bot's `@username` (without
-   the `@`) so the "send a GIF to the bot" button knows where to link.
+2. **Replace** your existing `api/telegram-webhook.js` with
+   `backend-additions/api/telegram-webhook.js` (adds custom-emoji capture
+   alongside the existing GIF flow).
+3. Run, in order:
+   - `backend-additions/migration_add_pet_emoji.sql`
+   - `backend-additions/migration_add_pet_custom_emoji.sql`
+4. In `src/App.jsx`, `BOT_USERNAME` is already set to `Tamagrambot`.
 
 ## Running it
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ASSETS, EMOJI_CHOICES } from './assets';
+import CustomEmojiFace from './CustomEmojiFace';
 import * as api from './api';
 
 const clamp = (n, min = 0, max = 100) => Math.max(min, Math.min(max, n));
@@ -179,6 +180,9 @@ function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
           <button className={tab === 'emoji' ? 'seg-active' : ''} onClick={() => setTab('emoji')}>
             Эмодзи
           </button>
+          <button className={tab === 'tgemoji' ? 'seg-active' : ''} onClick={() => setTab('tgemoji')}>
+            TG-эмодзи
+          </button>
           <button className={tab === 'gif' ? 'seg-active' : ''} onClick={() => setTab('gif')}>
             GIF
           </button>
@@ -196,6 +200,19 @@ function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
                 {e}
               </button>
             ))}
+          </div>
+        )}
+
+        {tab === 'tgemoji' && (
+          <div className="gif-tab">
+            <p>
+              Открой бота и пришли туда одно эмодзи из панели Telegram (обычной
+              или Premium-анимированной) — оно станет лицом питомца.
+            </p>
+            <button className="modal-primary" onClick={openBotForGif}>
+              Отправить эмодзи боту
+            </button>
+            {pet.custom_emoji_url && <p className="gif-current-hint">Сейчас установлено Telegram-эмодзи.</p>}
           </div>
         )}
 
@@ -226,7 +243,7 @@ function AppearanceModal({ pet, botUsername, onClose, onUpdated }) {
 
 // Set this to your bot's @username (without the @) to enable the
 // "send a GIF to the bot" appearance flow from api/telegram-webhook.js.
-const BOT_USERNAME = '';
+const BOT_USERNAME = 'Tamagrambot';
 
 export default function App() {
   const { status, player, pets, setPets, error, refresh } = useAuth();
@@ -243,6 +260,104 @@ export default function App() {
   const bubbleTimeoutRef = useRef(null);
   const toastTimeoutRef = useRef(null);
   const sceneRef = useRef(null);
+
+  /* ---------------- pet position: drag-to-throw + autonomous walking ---------------- */
+  // Rectangle (percent of the scene box) the pet is allowed to walk/be
+  // dropped in — roughly the floor area in front of the bed.
+  const ROOM_BOUNDS = { left: 12, right: 88, top: 58, bottom: 90 };
+  const PET_WIDTH_PCT = 34; // approx rendered width of the pet sprite, for centering
+
+  const [petPos, setPetPos] = useState({ x: 50, y: 78 });
+  const [facing, setFacing] = useState(1); // 1 = facing right, -1 = facing left
+  const [walking, setWalking] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const petDragRef = useRef({ moved: false, lastX: 50 });
+  const walkTimeoutRef = useRef(null);
+  const wanderIntervalRef = useRef(null);
+
+  const clampToBounds = useCallback((x, y) => ({
+    x: clamp(x, ROOM_BOUNDS.left, ROOM_BOUNDS.right),
+    y: clamp(y, ROOM_BOUNDS.top, ROOM_BOUNDS.bottom),
+  }), []);
+
+  const pointToPct = useCallback((clientX, clientY) => {
+    const el = sceneRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: ((clientX - rect.left) / rect.width) * 100,
+      y: ((clientY - rect.top) / rect.height) * 100,
+    };
+  }, []);
+
+  const handlePetPointerDown = useCallback((e) => {
+    e.preventDefault();
+    petDragRef.current = { moved: false, lastX: petPos.x };
+    setDragging(true);
+    clearTimeout(walkTimeoutRef.current);
+
+    function onMove(ev) {
+      const point = ev.touches ? ev.touches[0] : ev;
+      const pct = pointToPct(point.clientX, point.clientY);
+      if (!pct) return;
+      const next = clampToBounds(pct.x, pct.y);
+      if (Math.abs(next.x - petDragRef.current.lastX) > 0.5) {
+        setFacing(next.x > petDragRef.current.lastX ? 1 : -1);
+      }
+      petDragRef.current = { moved: true, lastX: next.x };
+      setPetPos(next);
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      setDragging(false);
+      if (!petDragRef.current.moved) {
+        // it was a tap, not a throw — open the appearance sheet
+        setAppearanceOpen(true);
+      } else {
+        showBubble('💫');
+        scheduleNextWander();
+      }
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [petPos.x, pointToPct, clampToBounds]);
+
+  function walkTo(target) {
+    setFacing(target.x >= petPos.x ? 1 : -1);
+    setWalking(true);
+    setPetPos(target);
+    const distance = Math.hypot(target.x - petPos.x, target.y - petPos.y);
+    const duration = Math.min(2600, Math.max(500, distance * 22));
+    clearTimeout(walkTimeoutRef.current);
+    walkTimeoutRef.current = setTimeout(() => setWalking(false), duration);
+  }
+
+  function scheduleNextWander() {
+    clearTimeout(wanderIntervalRef.current);
+    wanderIntervalRef.current = setTimeout(() => {
+      const target = {
+        x: ROOM_BOUNDS.left + Math.random() * (ROOM_BOUNDS.right - ROOM_BOUNDS.left),
+        y: ROOM_BOUNDS.top + Math.random() * (ROOM_BOUNDS.bottom - ROOM_BOUNDS.top),
+      };
+      walkTo(target);
+      scheduleNextWander();
+    }, 4000 + Math.random() * 3000);
+  }
+
+  useEffect(() => {
+    scheduleNextWander();
+    return () => {
+      clearTimeout(wanderIntervalRef.current);
+      clearTimeout(walkTimeoutRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---------------- parallax (sky/city drift behind the room) ---------------- */
   const [parallax, setParallax] = useState({ x: 0, y: 0 });
@@ -419,18 +534,45 @@ export default function App() {
             />
             <img src={ASSETS.room} className="room-layer" alt="" draggable={false} />
 
-            <div className="pet-zone">
-              <img src={ASSETS.bed} className="bed-sprite" alt="" draggable={false} />
-              <button className="pet-sprite-btn" onClick={() => setAppearanceOpen(true)} title="Изменить внешность">
+            <img src={ASSETS.bed} className="bed-sprite" alt="" draggable={false} />
+
+            <div
+              className={`pet-zone ${dragging ? 'pet-zone-dragging' : ''} ${walking ? 'pet-zone-walking' : ''}`}
+              style={{
+                left: `${petPos.x}%`,
+                top: `${petPos.y}%`,
+                width: `${PET_WIDTH_PCT}%`,
+                transition: dragging ? 'none' : 'left 0.05s linear, top 0.05s linear',
+              }}
+              onPointerDown={handlePetPointerDown}
+              title="Перетащи питомца по комнате, тапни — сменить внешность"
+            >
+              <div className="pet-facing" style={{ transform: `scaleX(${facing})` }}>
                 {pet.gif_url ? (
-                  <img src={pet.gif_url} className={`pet-sprite ${petBounce ? 'pet-bounce' : 'pet-idle'}`} alt={pet.name} draggable={false} />
+                  <img
+                    src={pet.gif_url}
+                    className={`pet-sprite ${petBounce ? 'pet-bounce' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
+                    alt={pet.name}
+                    draggable={false}
+                  />
+                ) : pet.custom_emoji_url ? (
+                  <CustomEmojiFace
+                    url={pet.custom_emoji_url}
+                    type={pet.custom_emoji_type}
+                    className={`pet-sprite pet-custom-emoji ${petBounce ? 'pet-bounce' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
+                  />
                 ) : (
                   <>
-                    <img src={ASSETS.basePet} className={`pet-sprite ${petBounce ? 'pet-bounce' : 'pet-idle'}`} alt={pet.name} draggable={false} />
+                    <img
+                      src={ASSETS.basePet}
+                      className={`pet-sprite ${petBounce ? 'pet-bounce' : walking || dragging ? 'pet-walk' : 'pet-idle'}`}
+                      alt={pet.name}
+                      draggable={false}
+                    />
                     {pet.emoji && <span className="pet-emoji-overlay">{pet.emoji}</span>}
                   </>
                 )}
-              </button>
+              </div>
               {bubble && (
                 <div key={bubble.id} className="emote-bubble">
                   {bubble.emoji}

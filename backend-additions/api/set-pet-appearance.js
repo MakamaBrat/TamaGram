@@ -61,7 +61,12 @@ export default async function handler(req, res) {
   }
 
   const updateValues = {};
-  if (emoji !== undefined) updateValues.emoji = emoji;
+  if (emoji !== undefined) {
+    updateValues.emoji = emoji;
+    // picking a plain unicode emoji supersedes any custom emoji set earlier
+    updateValues.custom_emoji_url = null;
+    updateValues.custom_emoji_type = null;
+  }
   if (clearGif) updateValues.gif_url = null;
 
   const { data: updatedPet, error: updateError } = await supabaseAdmin

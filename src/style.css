@@ -21,20 +21,46 @@ body {
    that the parallax drift never reveals their edges through the window.
    The room sprite is opaque everywhere except the window, so it masks
    these layers into just that cut-out as they shift. */
-.parallax-layer { position: absolute; left: 66.31%; top: 54.38%; will-change: transform; transition: transform 0.05s linear; }
+/* top nudged up from the window's raw center (54.38%) so the skyline
+   sits higher in the cut-out, closer to the top edge of the window. */
+.parallax-layer { position: absolute; left: 66.31%; top: 46%; will-change: transform; transition: transform 0.05s linear; }
 .sky-layer { width: 96%; z-index: 1; }
 .city-layer { width: 82%; z-index: 2; }
 .room-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 3; pointer-events: none; }
 
-.pet-zone { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); z-index: 4; width: 60%; text-align: center; }
-.bed-sprite { width: 100%; display: block; }
-.pet-sprite-btn { position: absolute; left: 50%; bottom: 30%; transform: translateX(-50%); width: 55%; background: none; border: none; padding: 0; cursor: pointer; }
-.pet-sprite { width: 100%; display: block; filter: drop-shadow(0 8px 12px rgba(0,0,0,0.4)); }
+.bed-sprite { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); width: 60%; display: block; z-index: 4; pointer-events: none; }
+
+/* The pet is a free-floating, draggable point (petPos.x/y, in % of the
+   scene) rather than something nested inside the bed — it can be thrown
+   anywhere within ROOM_BOUNDS and wanders on its own between drags. */
+.pet-zone {
+  position: absolute; transform: translate(-50%, -100%); z-index: 6;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.pet-zone-dragging { cursor: grabbing; z-index: 8; }
+.pet-facing { transition: transform 0.2s ease; }
+.pet-sprite { width: 100%; display: block; filter: drop-shadow(0 8px 12px rgba(0,0,0,0.4)); pointer-events: none; }
+/* video/lottie custom-emoji faces are square Telegram stickers, not the
+   pet's own art — keep them modestly sized and centered rather than
+   stretched to the pet-sprite's full width. */
+.pet-custom-emoji { width: 46% !important; aspect-ratio: 1 / 1; margin: 0 auto; object-fit: contain; background: none; }
 .pet-idle { animation: idleBob 3s ease-in-out infinite; }
 .pet-bounce { animation: petBounce 0.38s ease; }
+/* "Walking" — a quick shuffling wobble (weight shifting foot to foot) plus
+   a subtle up-down bob, so it reads as little paws stepping while the pet
+   is being dragged or wandering on its own between corners of the room. */
+.pet-walk { animation: petWalk 0.32s ease-in-out infinite; }
+.pet-zone-dragging .pet-sprite { animation: petWalk 0.22s ease-in-out infinite; }
 .pet-emoji-overlay { position: absolute; top: -10%; right: 0; font-size: 2.2rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
 @keyframes idleBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 @keyframes petBounce { 0% { transform: scale(1); } 40% { transform: scale(1.08, 0.92); } 100% { transform: scale(1); } }
+@keyframes petWalk {
+  0%   { transform: translateY(0) rotate(0deg); }
+  25%  { transform: translateY(-3px) rotate(-2.5deg); }
+  50%  { transform: translateY(0) rotate(0deg); }
+  75%  { transform: translateY(-3px) rotate(2.5deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
 
 .emote-bubble {
   position: absolute; top: -10%; left: 60%; font-size: 1.6rem;
