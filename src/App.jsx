@@ -244,6 +244,57 @@ export default function App() {
   const toastTimeoutRef = useRef(null);
   const sceneRef = useRef(null);
 
+  /* ---------------- parallax (sky/city drift behind the room) ---------------- */
+  const [parallax, setParallax] = useState({ x: 0, y: 0 });
+  const pointerTarget = useRef({ x: 0, y: 0 });
+  const rafRef = useRef(null);
+  const driftRef = useRef(0);
+
+  useEffect(() => {
+    const loop = () => {
+      driftRef.current += 0.006;
+      const driftX = Math.sin(driftRef.current) * 3;
+      const driftY = Math.cos(driftRef.current * 0.8) * 1.5;
+      setParallax((p) => {
+        const targetX = pointerTarget.current.x + driftX;
+        const targetY = pointerTarget.current.y + driftY;
+        return {
+          x: p.x + (targetX - p.x) * 0.08,
+          y: p.y + (targetY - p.y) * 0.08,
+        };
+      });
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  const handlePointerMove = useCallback((e) => {
+    const el = sceneRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    pointerTarget.current = { x: clamp(x, -0.5, 0.5) * 2, y: clamp(y, -0.5, 0.5) * 2 };
+  }, []);
+
+  const handlePointerLeave = useCallback(() => {
+    pointerTarget.current = { x: 0, y: 0 };
+  }, []);
+
+  // Also drive parallax from the device's gyroscope/orientation on mobile,
+  // where there's no mouse to move — subtle tilt = subtle parallax.
+  useEffect(() => {
+    function onOrientation(e) {
+      if (e.gamma == null || e.beta == null) return;
+      const x = clamp(e.gamma / 30, -1, 1) * 2;
+      const y = clamp((e.beta - 45) / 30, -1, 1) * 2;
+      pointerTarget.current = { x, y };
+    }
+    window.addEventListener('deviceorientation', onOrientation);
+    return () => window.removeEventListener('deviceorientation', onOrientation);
+  }, []);
+
   useEffect(() => {
     if (pets.length && activePetId == null) setActivePetId(pets[0].id);
   }, [pets, activePetId]);
@@ -345,10 +396,27 @@ export default function App() {
   return (
     <div className="app-root">
       <div className="app-frame">
-        <div className="scene" ref={sceneRef}>
+        <div
+          className="scene"
+          ref={sceneRef}
+          onPointerMove={handlePointerMove}
+          onPointerLeave={handlePointerLeave}
+        >
           <div className="scene-crop">
-            <img src={isDay ? ASSETS.skyDay : ASSETS.skyNight} className="parallax-layer sky-layer" alt="" draggable={false} />
-            <img src={isDay ? ASSETS.cityDay : ASSETS.cityNight} className="parallax-layer city-layer" alt="" draggable={false} />
+            <img
+              src={isDay ? ASSETS.skyDay : ASSETS.skyNight}
+              className="parallax-layer sky-layer"
+              style={{ transform: `translate(-50%, -50%) translate(${parallax.x * 3}px, ${parallax.y * 2}px)` }}
+              alt=""
+              draggable={false}
+            />
+            <img
+              src={isDay ? ASSETS.cityDay : ASSETS.cityNight}
+              className="parallax-layer city-layer"
+              style={{ transform: `translate(-50%, -50%) translate(${parallax.x * 8}px, ${parallax.y * 4}px)` }}
+              alt=""
+              draggable={false}
+            />
             <img src={ASSETS.room} className="room-layer" alt="" draggable={false} />
 
             <div className="pet-zone">

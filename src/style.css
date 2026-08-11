@@ -15,13 +15,16 @@ body {
 }
 
 /* ---------------- scene ---------------- */
-.scene { position: relative; width: 100%; aspect-ratio: 1024 / 1300; overflow: hidden; }
+.scene { position: relative; width: 100%; aspect-ratio: 1024 / 1300; overflow: hidden; touch-action: none; }
 .scene-crop { position: absolute; inset: 0; }
-.parallax-layer { position: absolute; }
-.sky-layer, .city-layer { left: 66.31%; top: 54.38%; transform: translate(-50%, -50%); }
+/* Sky and city sit centered on the room's window cut-out, oversized so
+   that the parallax drift never reveals their edges through the window.
+   The room sprite is opaque everywhere except the window, so it masks
+   these layers into just that cut-out as they shift. */
+.parallax-layer { position: absolute; left: 66.31%; top: 54.38%; will-change: transform; transition: transform 0.05s linear; }
 .sky-layer { width: 96%; z-index: 1; }
 .city-layer { width: 82%; z-index: 2; }
-.room-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 3; }
+.room-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 3; pointer-events: none; }
 
 .pet-zone { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); z-index: 4; width: 60%; text-align: center; }
 .bed-sprite { width: 100%; display: block; }
