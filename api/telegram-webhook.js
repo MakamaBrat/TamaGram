@@ -200,21 +200,29 @@ export default async function handler(req, res) {
       .eq('telegram_id', telegramId)
       .single();
 
-    // --- Вариант 1: обычный файл-GIF ---
-    if (message.animation || message.document) {
-      const file = message.animation || message.document;
+    // --- Вариант 1: обычный файл-GIF или .webm-видео (в т.ч. видео-стикер) ---
+    if (message.animation || message.document || message.video) {
+      const file = message.animation || message.document || message.video;
+      const mime = file.mime_type || '';
+      // Telegram присылает .webm document/video с mime "video/webm" —
+      // раньше такие файлы отбрасывались проверкой ниже (mime.includes('gif')),
+      // хотя ffmpeg-конвертация в GIF уже реализована для custom emoji.
+      // Определяем webm по mime ИЛИ по расширению в file_path (на случай,
+      // если Telegram не проставит mime_type для документа).
+      const isWebm = mime.includes('webm');
+      const isGif = mime.includes('gif');
 
-      if (file.file_size > MAX_GIF_SIZE) {
-        await tgApi('sendMessage', {
-          chat_id: telegramId,
-          text: `Файл слишком большой (${Math.round(file.file_size / 1024)} КБ). Максимум ${MAX_GIF_SIZE / 1024} КБ.`,
-        });
+      if (!isGif && !isWebm) {
+        await tgApi('sendMessage', { chat_id: telegramId, text: 'Нужен файл в формате GIF или .webm.' });
         return res.status(200).send('ok');
       }
 
-      const mime = file.mime_type || '';
-      if (!mime.includes('gif')) {
-        await tgApi('sendMessage', { chat_id: telegramId, text: 'Нужен файл в формате GIF.' });
+      const sizeLimit = isWebm ? MAX_EMOJI_SOURCE_SIZE : MAX_GIF_SIZE;
+      if (file.file_size > sizeLimit) {
+        await tgApi('sendMessage', {
+          chat_id: telegramId,
+          text: `Файл слишком большой (${Math.round(file.file_size / 1024)} КБ). Максимум ${sizeLimit / 1024} КБ.`,
+        });
         return res.status(200).send('ok');
       }
 
@@ -227,11 +235,30 @@ export default async function handler(req, res) {
       }
 
       const { buffer } = await downloadTelegramFile(file.file_id);
+
+      let gifBuffer;
+      if (isWebm) {
+        try {
+          gifBuffer = await convertWebmToGif(buffer);
+        } catch (convertError) {
+          console.error('ffmpeg convert error (direct webm):', convertError);
+          await tgApi('sendMessage', { chat_id: telegramId, text: 'Не удалось обработать этот .webm, попробуйте другой файл.' });
+          return res.status(200).send('ok');
+        }
+
+        if (gifBuffer.length > MAX_CONVERTED_GIF_SIZE) {
+          await tgApi('sendMessage', { chat_id: telegramId, text: 'Файл слишком большой после обработки, попробуйте другой.' });
+          return res.status(200).send('ok');
+        }
+      } else {
+        gifBuffer = buffer;
+      }
+
       const fileName = `pet_${pending.pet_id}_${Date.now()}.gif`;
 
       const { error: uploadError } = await supabase.storage
         .from('pet-gifs')
-        .upload(fileName, buffer, { contentType: 'image/gif', upsert: true });
+        .upload(fileName, gifBuffer, { contentType: 'image/gif', upsert: true });
 
       if (uploadError) {
         await tgApi('sendMessage', { chat_id: telegramId, text: 'Ошибка загрузки, попробуйте ещё раз.' });
