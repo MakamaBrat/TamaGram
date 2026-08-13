@@ -33,7 +33,7 @@ import ffmpegPath from 'ffmpeg-static';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MAX_GIF_SIZE = 128 * 1024; // 128 KB — обычные присланные GIF-файлы
 const MAX_EMOJI_SOURCE_SIZE = 256 * 1024; // 256 KB — исходный .webm/.tgs от Telegram
-const MAX_CONVERTED_GIF_SIZE = 512 * 1024; // 512 KB — итоговый GIF после конвертации (кадры + альфа занимают больше места, чем видео)
+const MAX_CONVERTED_GIF_SIZE = 1024 * 1024; // 1 MB — итоговый GIF после конвертации (кадры + альфа занимают больше места, чем видео)
 
 async function tgApi(method, params) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
