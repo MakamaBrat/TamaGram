@@ -63,9 +63,8 @@ export default async function handler(req, res) {
   const updateValues = {};
   if (emoji !== undefined) {
     updateValues.emoji = emoji;
-    // picking a plain unicode emoji supersedes any custom emoji set earlier
-    updateValues.custom_emoji_url = null;
-    updateValues.custom_emoji_type = null;
+    // выбор обычного emoji вытесняет ранее поставленный gif/custom emoji
+    updateValues.gif_url = null;
   }
   if (clearGif) updateValues.gif_url = null;
 

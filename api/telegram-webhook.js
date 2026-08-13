@@ -216,7 +216,7 @@ export default async function handler(req, res) {
 
       const { error: dbError } = await supabase
         .from('pets')
-        .update({ gif_url: publicUrlData.publicUrl, emoji: null, custom_emoji_url: null, custom_emoji_type: null })
+        .update({ gif_url: publicUrlData.publicUrl, emoji: null })
         .eq('id', pending.pet_id);
 
       if (dbError) {
@@ -303,7 +303,7 @@ export default async function handler(req, res) {
       // знать, что исходником было custom emoji.
       const { error: dbError } = await supabase
         .from('pets')
-        .update({ gif_url: publicUrlData.publicUrl, emoji: null, custom_emoji_url: null, custom_emoji_type: null })
+        .update({ gif_url: publicUrlData.publicUrl, emoji: null })
         .eq('id', pending.pet_id);
 
       if (dbError) {
