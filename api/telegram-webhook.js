@@ -282,6 +282,19 @@ export default async function handler(req, res) {
 
       const { buffer, ext } = await downloadTelegramFile(sticker.file_id);
 
+      // ВРЕМЕННО ДЛЯ ДИАГНОСТИКИ: сохраняем исходный webm как есть, чтобы
+      // можно было скачать и проверить его напрямую. Убрать после отладки
+      // прозрачности — не нужен в проде.
+      if (ext === 'webm') {
+        await supabase.storage
+          .from('pet-gifs')
+          .upload(`debug_source_${pending.pet_id}_${Date.now()}.webm`, buffer, {
+            contentType: 'video/webm',
+            upsert: true,
+          })
+          .catch((e) => console.error('debug webm upload failed:', e));
+      }
+
       if (buffer.length > MAX_EMOJI_SOURCE_SIZE) {
         await tgApi('sendMessage', { chat_id: telegramId, text: 'Это эмодзи слишком большое, попробуйте другое.' });
         return res.status(200).send('ok');
