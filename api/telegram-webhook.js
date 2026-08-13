@@ -81,13 +81,16 @@ async function convertWebmToGif(webmBuffer) {
   try {
     await fs.writeFile(inputPath, webmBuffer);
 
-    // Проход 1: строим палитру. reserve_transparent=1 резервирует
-    // индекс под прозрачный цвет — без этого альфа-канал потеряется
-    // при квантовании в 256-цветную GIF-палитру.
+    // Проход 1: строим палитру. Важно применить format=yuva420p ДО
+    // palettegen — иначе palettegen не видит альфа-канал и не понимает,
+    // какие пиксели прозрачные, поэтому индекс прозрачности резервируется,
+    // но никогда не используется (получается сплошной цвет вместо
+    // прозрачного фона). reserve_transparent=1 резервирует индекс под
+    // прозрачный цвет в самой палитре.
     await runFfmpeg([
       '-y',
       '-i', inputPath,
-      '-vf', 'fps=20,scale=200:-1:flags=lanczos,palettegen=reserve_transparent=1',
+      '-vf', 'fps=20,scale=200:-1:flags=lanczos,format=yuva420p,palettegen=reserve_transparent=1',
       palettePath,
     ]);
 
