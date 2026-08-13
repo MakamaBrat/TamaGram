@@ -286,13 +286,16 @@ export default async function handler(req, res) {
       // можно было скачать и проверить его напрямую. Убрать после отладки
       // прозрачности — не нужен в проде.
       if (ext === 'webm') {
-        await supabase.storage
+        const debugName = `debug_source_${pending.pet_id}_${Date.now()}.webm`;
+        const { data: debugUploadData, error: debugUploadError } = await supabase.storage
           .from('pet-gifs')
-          .upload(`debug_source_${pending.pet_id}_${Date.now()}.webm`, buffer, {
-            contentType: 'video/webm',
-            upsert: true,
-          })
-          .catch((e) => console.error('debug webm upload failed:', e));
+          .upload(debugName, buffer, { contentType: 'video/webm', upsert: true });
+
+        if (debugUploadError) {
+          console.error('debug webm upload failed:', debugUploadError);
+        } else {
+          console.log('debug webm uploaded OK:', debugName, debugUploadData);
+        }
       }
 
       if (buffer.length > MAX_EMOJI_SOURCE_SIZE) {
