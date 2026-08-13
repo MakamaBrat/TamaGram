@@ -46,11 +46,19 @@ export default async function handler(req, res) {
   }
 
   // проверяем, что питомец действительно принадлежит этому игроку
-  const { data: player } = await supabaseAdmin
+  const { data: player, error: playerError } = await supabaseAdmin
     .from('players')
     .select('id')
     .eq('telegram_id', session.telegramId)
     .single();
+
+  // раньше отсутствие игрока не проверялось: если players lookup вернёт
+  // null (например, сессия валидна, но запись почему-то отсутствует),
+  // следующий .eq('owner_id', player.id) уронил бы функцию с TypeError
+  // ("Cannot read properties of null") вместо аккуратного 404.
+  if (playerError || !player) {
+    return res.status(404).json({ error: 'Player not found' });
+  }
 
   const { data: pet, error: petError } = await supabaseAdmin
     .from('pets')
@@ -77,6 +85,14 @@ export default async function handler(req, res) {
     hunger: clamp(pet.hunger + (effect.hunger || 0)),
     energy: clamp(pet.energy + (effect.energy || 0)),
     cleanliness: clamp(pet.cleanliness + (effect.cleanliness || 0)),
+    // Кулдаун выше считается от pet.updated_at. Если в таблице нет
+    // отдельного триггера, который сам проставляет updated_at при
+    // UPDATE, это поле никогда не менялось бы — и после первого
+    // успешного действия кулдаун переставал бы работать вообще
+    // (secondsSinceUpdate считался бы от одной и той же старой даты
+    // и всегда оказывался бы больше cooldownSec). Проставляем явно,
+    // чтобы антиспам работал независимо от наличия триггера в БД.
+    updated_at: new Date().toISOString(),
   };
 
   const { data: updatedPet, error: updateError } = await supabaseAdmin

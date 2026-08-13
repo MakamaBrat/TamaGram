@@ -81,56 +81,51 @@ async function convertWebmToGif(webmBuffer) {
   try {
     await fs.writeFile(inputPath, webmBuffer);
 
-    // ВАЖНО: webm с альфой у Telegram (VP8/VP9) хранит цвет и альфу как
-    // ДВА РАЗНЫХ видеопотока в одном файле (0:v:0 — цвет, 0:v:1 — альфа
-    // как ч/б маска), а не как единый RGBA-кадр. Раньше здесь стоял
-    // просто `format=yuva420p` на потоке 0:v:0 — а у него своей альфы
-    // никогда не было, поэтому получалась сплошная непрозрачность
-    // (альфа=255 везде), хотя в самом Telegram эмодзи прозрачное.
-    // Чтобы реально перенести прозрачность, нужно явно склеить два
-    // потока фильтром alphamerge: [0:v:0] даёт цвет, [0:v:1] — маску
-    // альфы (яркость пикселя = уровень непрозрачности).
-    const alphaMerge =
-      '[0:v:0]fps=20,scale=200:-1:flags=lanczos[color];' +
-      '[0:v:1]fps=20,scale=200:-1:flags=lanczos[alpha];' +
-      '[color][alpha]alphamerge,format=yuva420p[merged]';
+    // ВАЖНО (исправлено): у Telegram-эмодзи (.webm, VP8/VP9) НЕТ второго
+    // видеопотока с альфой — раньше код тут думал, что цвет и альфа это
+    // 0:v:0 и 0:v:1, и склеивал их через alphamerge. Такого потока
+    // 0:v:1 не существует: альфа зашита как Matroska BlockAdditional
+    // side data ВНУТРИ ТЕХ ЖЕ пакетов 0:v:0 (это подтверждено разбором
+    // сырого файла: side_data_type=Matroska BlockAdditional, 8-байтный
+    // BlockAddID=1 + отдельный VP9-битстрим альфы на каждый кадр).
+    // Поэтому [0:v:1] в filter_complex всегда падал с ошибкой, срабатывал
+    // catch, и рендерился фолбэк без альфы — отсюда всегда непрозрачный GIF.
+    //
+    // Настоящий фикс: не трогать фильтры вообще, а декодировать входной
+    // webm ОБЁРТКОЙ НАД libvpx (`-c:v libvpx-vp9`) вместо родной
+    // ffmpeg-реализации VP9 (`vp9`). Только libvpx-декодер умеет сам
+    // сливать side-data альфу в кадр как честный RGBA/yuva420p — родной
+    // `vp9` в libavcodec эту side data просто игнорирует. Проверено на
+    // реальном файле: с `-c:v libvpx-vp9` альфа-канал приходит с
+    // нормальным диапазоном 0..255, без всякого alphamerge.
+    const filterBody = 'fps=20,scale=200:-1:flags=lanczos,format=yuva420p[merged]';
 
-    // Обычный путь: цвет и альфа — два отдельных потока (0:v:0 / 0:v:1),
-    // склеиваем через alphamerge. Фолбэк на случай, если у конкретного
-    // файла альфа-потока нет (некоторые сборки/файлы отдают уже готовый
-    // yuva420p одним потоком) — тогда просто помечаем формат как раньше.
-    const plainFormat = 'fps=20,scale=200:-1:flags=lanczos,format=yuva420p[merged]';
-
-    async function buildPalette(filterBody) {
+    async function buildPalette() {
       await runFfmpeg([
         '-y',
+        '-c:v', 'libvpx-vp9', // форсируем декодер libvpx — только он сливает alpha side-data
         '-i', inputPath,
-        '-filter_complex', `${filterBody};[merged]palettegen=reserve_transparent=1[pal]`,
+        '-filter_complex', `[0:v]${filterBody};[merged]palettegen=reserve_transparent=1[pal]`,
         '-map', '[pal]',
         palettePath,
       ]);
     }
 
-    async function renderGif(filterBody) {
+    async function renderGif() {
       await runFfmpeg([
         '-y',
+        '-c:v', 'libvpx-vp9',
         '-i', inputPath,
         '-i', palettePath,
-        '-filter_complex', `${filterBody};[merged][1:v]paletteuse=alpha_threshold=128[out]`,
+        '-filter_complex', `[0:v]${filterBody};[merged][1:v]paletteuse=alpha_threshold=128[out]`,
         '-map', '[out]',
         '-loop', '0',
         outputPath,
       ]);
     }
 
-    try {
-      await buildPalette(alphaMerge);
-      await renderGif(alphaMerge);
-    } catch (mergeError) {
-      console.warn('alphamerge path failed, falling back to single-stream yuva420p:', mergeError.message);
-      await buildPalette(plainFormat);
-      await renderGif(plainFormat);
-    }
+    await buildPalette();
+    await renderGif();
 
     const gifBuffer = await fs.readFile(outputPath);
     return gifBuffer;
@@ -308,22 +303,6 @@ export default async function handler(req, res) {
       }
 
       const { buffer, ext } = await downloadTelegramFile(sticker.file_id);
-
-      // ВРЕМЕННО ДЛЯ ДИАГНОСТИКИ: сохраняем исходный webm как есть, чтобы
-      // можно было скачать и проверить его напрямую. Убрать после отладки
-      // прозрачности — не нужен в проде.
-      if (ext === 'webm') {
-        const debugName = `debug_source_${pending.pet_id}_${Date.now()}.webm`;
-        const { data: debugUploadData, error: debugUploadError } = await supabase.storage
-          .from('pet-gifs')
-          .upload(debugName, buffer, { contentType: 'video/webm', upsert: true });
-
-        if (debugUploadError) {
-          console.error('debug webm upload failed:', debugUploadError);
-        } else {
-          console.log('debug webm uploaded OK:', debugName, debugUploadData);
-        }
-      }
 
       if (buffer.length > MAX_EMOJI_SOURCE_SIZE) {
         await tgApi('sendMessage', { chat_id: telegramId, text: 'Это эмодзи слишком большое, попробуйте другое.' });
