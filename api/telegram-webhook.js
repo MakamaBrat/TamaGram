@@ -81,33 +81,56 @@ async function convertWebmToGif(webmBuffer) {
   try {
     await fs.writeFile(inputPath, webmBuffer);
 
-    // Проход 1: строим палитру. Важно применить format=yuva420p ДО
-    // palettegen — иначе palettegen не видит альфа-канал и не понимает,
-    // какие пиксели прозрачные, поэтому индекс прозрачности резервируется,
-    // но никогда не используется (получается сплошной цвет вместо
-    // прозрачного фона). reserve_transparent=1 резервирует индекс под
-    // прозрачный цвет в самой палитре.
-    await runFfmpeg([
-      '-y',
-      '-i', inputPath,
-      '-vf', 'fps=20,scale=200:-1:flags=lanczos,format=yuva420p,palettegen=reserve_transparent=1',
-      palettePath,
-    ]);
+    // ВАЖНО: webm с альфой у Telegram (VP8/VP9) хранит цвет и альфу как
+    // ДВА РАЗНЫХ видеопотока в одном файле (0:v:0 — цвет, 0:v:1 — альфа
+    // как ч/б маска), а не как единый RGBA-кадр. Раньше здесь стоял
+    // просто `format=yuva420p` на потоке 0:v:0 — а у него своей альфы
+    // никогда не было, поэтому получалась сплошная непрозрачность
+    // (альфа=255 везде), хотя в самом Telegram эмодзи прозрачное.
+    // Чтобы реально перенести прозрачность, нужно явно склеить два
+    // потока фильтром alphamerge: [0:v:0] даёт цвет, [0:v:1] — маску
+    // альфы (яркость пикселя = уровень непрозрачности).
+    const alphaMerge =
+      '[0:v:0]fps=20,scale=200:-1:flags=lanczos[color];' +
+      '[0:v:1]fps=20,scale=200:-1:flags=lanczos[alpha];' +
+      '[color][alpha]alphamerge,format=yuva420p[merged]';
 
-    // Проход 2: рендерим GIF с этой палитрой.
-    // format=yuva420p сохраняет альфа-канал из исходного видео (если он
-    // там есть — Telegram custom emoji обычно кодируются именно так).
-    // paletteuse с alpha_threshold режет полупрозрачные пиксели по
-    // порогу в бинарную прозрачность, как того требует формат GIF.
-    await runFfmpeg([
-      '-y',
-      '-i', inputPath,
-      '-i', palettePath,
-      '-lavfi',
-      'fps=20,scale=200:-1:flags=lanczos,format=yuva420p[x];[x][1:v]paletteuse=alpha_threshold=128',
-      '-loop', '0',
-      outputPath,
-    ]);
+    // Обычный путь: цвет и альфа — два отдельных потока (0:v:0 / 0:v:1),
+    // склеиваем через alphamerge. Фолбэк на случай, если у конкретного
+    // файла альфа-потока нет (некоторые сборки/файлы отдают уже готовый
+    // yuva420p одним потоком) — тогда просто помечаем формат как раньше.
+    const plainFormat = 'fps=20,scale=200:-1:flags=lanczos,format=yuva420p[merged]';
+
+    async function buildPalette(filterBody) {
+      await runFfmpeg([
+        '-y',
+        '-i', inputPath,
+        '-filter_complex', `${filterBody};[merged]palettegen=reserve_transparent=1[pal]`,
+        '-map', '[pal]',
+        palettePath,
+      ]);
+    }
+
+    async function renderGif(filterBody) {
+      await runFfmpeg([
+        '-y',
+        '-i', inputPath,
+        '-i', palettePath,
+        '-filter_complex', `${filterBody};[merged][1:v]paletteuse=alpha_threshold=128[out]`,
+        '-map', '[out]',
+        '-loop', '0',
+        outputPath,
+      ]);
+    }
+
+    try {
+      await buildPalette(alphaMerge);
+      await renderGif(alphaMerge);
+    } catch (mergeError) {
+      console.warn('alphamerge path failed, falling back to single-stream yuva420p:', mergeError.message);
+      await buildPalette(plainFormat);
+      await renderGif(plainFormat);
+    }
 
     const gifBuffer = await fs.readFile(outputPath);
     return gifBuffer;
