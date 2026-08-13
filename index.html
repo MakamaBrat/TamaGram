@@ -17,6 +17,13 @@
       }
       #unity-container.unity-mobile { width: 100vw; height: var(--app-height, 100vh); }
       #unity-canvas.unity-mobile { width: 100vw !important; height: var(--app-height, 100vh) !important; }
+
+      /* Любые нативные input/textarea, которые Unity (TMP_InputField)
+         создаёт в DOM для вызова системной клавиатуры, должны быть
+         зафиксированы и не участвовать в браузерном auto-scroll-into-view. */
+      input, textarea {
+        position: fixed !important;
+      }
     </style>
   </head>
   <body>
@@ -100,6 +107,39 @@
         setTimeout(lockAppHeight, 300);
       });
 
+      // ------------------------------------------------------------
+      // Фикс скролла от нативного <input>/<textarea>, который создаёт
+      // TMP_InputField / InputField на WebGL при получении фокуса
+      // (через TouchScreenKeyboard.Open). Мобильный браузер, увидев
+      // фокус на инпуте, сам пытается "проскроллить" его в зону
+      // видимости — это и вызывает рывок экрана, независимо от того,
+      // зафиксирован ли body. Гасим этот скролл принудительно и
+      // несколько раз подряд, т.к. браузер может скроллить с задержкой
+      // (во время анимации появления клавиатуры).
+      // ------------------------------------------------------------
+      function pinScroll() {
+        window.scrollTo(0, 0);
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+      }
+
+      document.addEventListener('focusin', function (e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+          pinScroll();
+          setTimeout(pinScroll, 50);
+          setTimeout(pinScroll, 150);
+          setTimeout(pinScroll, 300);
+          setTimeout(lockAppHeight, 350);
+        }
+      }, true);
+
+      document.addEventListener('focusout', function (e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+          setTimeout(pinScroll, 50);
+          setTimeout(lockAppHeight, 350);
+        }
+      }, true);
+
       var canvas = document.querySelector("#unity-canvas");
 
       // Shows a temporary message banner/ribbon for a few seconds, or
@@ -167,7 +207,7 @@
       // т.к. приложение открывается как Telegram Mini App в полноэкранном режиме.
       var meta = document.createElement('meta');
       meta.name = 'viewport';
-      meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+      meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes, interactive-widget=resizes-content';
       document.getElementsByTagName('head')[0].appendChild(meta);
       document.querySelector("#unity-container").className = "unity-mobile";
       canvas.className = "unity-mobile";
