@@ -67,44 +67,53 @@
       // но корректно обновляется при реальном expand()/повороте экрана.
       // Вне Telegram (обычный браузер, тест) используем visualViewport.
       // ------------------------------------------------------------
+      // ------------------------------------------------------------
+      // ВАЖНО: раньше высота бралась из tg.viewportStableHeight с фолбэком
+      // на CSS "100vh". Проблема в том, что на iOS "100vh" внутри Telegram
+      // WebView — динамическая величина и САМА уменьшается при появлении
+      // клавиатуры (это и вызывало "сплющивание" канваса на видео).
+      // Плюс если viewportStableHeight ещё не готов к первому тику —
+      // фолбэк молча утягивал в 100vh без предупреждения.
+      //
+      // Новый подход: высота фиксируется в px (не в vh/vw), хранится
+      // в переменной и не уменьшается от событий, похожих на клавиатуру —
+      // только явный expand()/поворот экрана может её уменьшить/увеличить.
+      // ------------------------------------------------------------
+      var lockedHeightPx = null;
+
       function currentStableHeight() {
         if (tg && tg.viewportStableHeight) return tg.viewportStableHeight;
         return (window.visualViewport ? window.visualViewport.height : window.innerHeight);
       }
 
-      function lockAppHeight() {
-        document.documentElement.style.setProperty('--app-height', currentStableHeight() + 'px');
+      function lockAppHeight(force) {
+        var h = currentStableHeight();
+        // Разрешаем менять зафиксированную высоту только если это явный
+        // (force) вызов при expand/orientation, либо новое значение БОЛЬШЕ
+        // текущего (экран стал больше — это точно не клавиатура).
+        if (force || lockedHeightPx === null || h > lockedHeightPx) {
+          lockedHeightPx = h;
+        }
+        document.documentElement.style.setProperty('--app-height', lockedHeightPx + 'px');
       }
 
-      lockAppHeight();
-      // Подстраховка: на некоторых устройствах viewportStableHeight
-      // проставляется не в первый же тик после ready()/expand().
-      setTimeout(lockAppHeight, 300);
+      lockAppHeight(true);
+      setTimeout(function(){ lockAppHeight(true); }, 300);
+      setTimeout(function(){ lockAppHeight(true); }, 800); // подстраховка под медленный expand()
 
       if (tg) {
-        // Стреляет и на expand/collapse, и на открытие клавиатуры — но
-        // viewportStableHeight внутри уже не включает клавиатуру, так что
-        // просто всегда пересчитываем из него, без дополнительных условий.
-        tg.onEvent("viewportChanged", lockAppHeight);
-      } else if (window.visualViewport) {
-        // Вне Telegram (тест в обычном мобильном браузере) стабильного
-        // значения нет — просто дополнительно защищаемся от прыжков при
-        // клавиатуре: обновляем только при заметном изменении (поворот),
-        // а на маленькие уменьшения (клавиатура) не реагируем.
-        var initialHeight = currentStableHeight();
-        window.visualViewport.addEventListener('resize', function () {
-          var h = currentStableHeight();
-          if (Math.abs(h - initialHeight) > 120) {
-            initialHeight = h;
-            lockAppHeight();
-          } else {
-            window.scrollTo(0, 0);
-          }
+        tg.onEvent("viewportChanged", function (e) {
+          // isStateStable == false обычно означает, что причина изменения —
+          // клавиатура (промежуточное состояние). true/undefined — реальный
+          // expand/collapse/поворот. Пересчитываем принудительно только
+          // в стабильном состоянии.
+          var stable = !e || e.isStateStable !== false;
+          if (stable) lockAppHeight(true);
         });
       }
 
       window.addEventListener('orientationchange', function () {
-        setTimeout(lockAppHeight, 300);
+        setTimeout(function(){ lockAppHeight(true); }, 300);
       });
 
       // ------------------------------------------------------------
